@@ -1,3 +1,5 @@
+# RIDEPAY
+
 # Stellar Notes DApp
 
 **Stellar Notes DApp** - Blockchain-Based Decentralized Note-Taking System
