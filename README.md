@@ -1,121 +1,234 @@
-# RIDEPAY
+# RidePay
 
-# Stellar Notes DApp
+> USDC micropayment settlement for informal transport operators — built on Stellar Soroban.
 
-**Stellar Notes DApp** - Blockchain-Based Decentralized Note-Taking System
+---
 
-## Project Description
+## Problem
 
-Stellar Notes DApp is a decentralized smart contract solution built on the Stellar blockchain using Soroban SDK. It provides a secure, immutable platform for managing personal notes directly on the blockchain. The contract ensures that your data is stored transparently and is only manageable through predefined smart contract functions, eliminating reliance on centralized database providers.
+Informal transport operators (tuk-tuks, mototaxis, jeepneys, boda bodas) lose 15–30% of daily income because riders cannot produce exact small-denomination change and no existing digital payment option is economically viable at sub-$1 fare sizes. Traditional payment processors charge flat fees that exceed the fare margin entirely.
 
-The system allows users to create, view, and delete notes, leveraging the efficiency and security of the Stellar network. Each note is uniquely identified and stored within the contract's instance storage, ensuring data persistence and reliability.
+## Solution
 
-## Project Vision
+RidePay lets an operator display a dynamic QR code encoding the exact fare. The rider scans it with any Stellar-compatible wallet and sends USDC. A Soroban smart contract settles the transfer in under 5 seconds at a fee below $0.00001. At day's end the operator swaps USDC for local fiat through a regional anchor via Stellar's built-in DEX.
 
-Our vision is to revolutionize personal productivity in the digital age by:
+---
 
-- **Decentralizing Data**: Moving note-taking from centralized servers to a global, distributed blockchain
-- **Ensuring Ownership**: Empowering users to have complete control and ownership over their digital thoughts and information
-- **Guaranteeing Immutability**: Providing a permanent, tamper-proof record of notes that cannot be altered or deleted by third parties
-- **Enhancing Privacy**: Leveraging blockchain security to protect personal information from unauthorized access
-- **Building Trustless Systems**: Creating a platform where data integrity is guaranteed by code, not by company promises
+## How the settlement works
 
-We envision a future where digital information is truly personal and sovereign, empowering individuals with complete autonomy over their digital assets.
+```
+Rider wallet                 RidePay contract              Operator wallet
+     │                             │                              │
+     │── approve(contract, fare) ──▶│  (done once in mobile app)  │
+     │                             │                              │
+     │── settle_ride(ride_id) ────▶│                              │
+     │                             │── transfer_from(rider) ─────▶│  USDC fare
+     │                             │── transfer(contract) ────────▶│  1 loyalty token
+     │                             │── persist RideRecord          │
+     │                             │── emit RideSettled event      │
+     │◀─────────────────────────── confirmed ─────────────────────▶│
+```
 
-## Key Features
+Key design decisions:
+- `transfer_from` is used for USDC because the rider holds the tokens. The rider calls `approve` on the USDC contract once (via wallet deep-link) authorising this contract as spender.
+- `transfer` is used for loyalty tokens because the contract itself holds its own reserve, minted by the admin at deploy time.
+- Both the rider and operator must sign `settle_ride` — prevents either party from settling without the other's consent.
+- The `ride_id` idempotency guard ensures a network retry can never double-charge a rider.
 
-### 1. **Simple Note Creation**
+---
 
-- Create notes with just one function call
-- Specify title and content for each note
-- Automated ID generation for unique identification
-- Persistent storage on the Stellar blockchain
+## Timeline
 
-### 2. **Efficient Data Retrieval**
+| Week | Milestone |
+|------|-----------|
+| 1 | Soroban contract deployed to testnet; CLI settle flow verified |
+| 2 | Mobile-first PWA: QR generation, wallet deep-link, settlement confirmation screen |
+| 3 | Loyalty token integration; anchor swap UI with DEX routing |
+| 4 | End-to-end demo recorded; operator and rider onboarding flow complete |
 
-- Fetch all stored notes in a single call
-- Structured data representation for easy frontend integration
-- Quick access to your entire note collection
-- Real-time synchronization with the blockchain state
+---
 
-### 3. **Secure Deletion**
+## Stellar Features Used
 
-- Remove specific notes using their unique IDs
-- Permanent removal from the contract storage
-- Clean and efficient storage management
-- Immediate update of the note list after deletion
+| Feature | Purpose |
+|---------|---------|
+| USDC transfers (`transfer_from`) | Pull exact fare from rider with prior approval |
+| Soroban smart contract | On-chain settlement, idempotency, events |
+| Custom loyalty token (`transfer`) | 1 reward token per ride from contract reserve |
+| Trustlines | Rider and operator establish USDC trustline before first use |
+| Built-in DEX | End-of-day USDC → local fiat via regional anchor |
 
-### 4. **Transparency and Security**
+---
 
-- View all note activities on the blockchain
-- Blockchain-based verification of all storage actions
-- Immutable records of note creation and deletion
-- Protected against unauthorized modifications
+## Vision and Purpose
 
-### 5. **Stellar Network Integration**
+Informal transport workers are among the most cash-dependent workers in the global urban economy. RidePay gives any operator a bank-account-free way to accept exact digital payment, build a verifiable on-chain earnings history, and access savings and DeFi products — starting with a single printed QR code. The contract is region-agnostic: any local USDC anchor and any Stellar-compatible wallet work out of the box.
 
-- Leverages the high speed and low cost of Stellar
-- Built using the modern Soroban Smart Contract SDK
-- Scalable architecture for growing note collections
-- Interoperable with other Stellar-based services
+---
+
+## Prerequisites
+
+```bash
+# 1. Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# 2. Wasm compilation target
+rustup target add wasm32-unknown-unknown
+
+# 3. Stellar CLI (must match SDK major version — use v22)
+cargo install --locked stellar-cli --version 22.0.1
+```
+
+---
+
+## Build
+
+```bash
+stellar contract build
+# Output: target/wasm32-unknown-unknown/release/ride_pay.wasm
+```
+
+---
+
+## Test
+
+```bash
+cargo test
+```
+
+Expected:
+
+```
+running 5 tests
+test test::test_happy_path_settle_ride         ... ok
+test test::test_duplicate_ride_id_rejected     ... ok
+test test::test_ride_record_stored_correctly   ... ok
+test test::test_zero_fare_rejected             ... ok
+test test::test_ride_counter_increments        ... ok
+
+test result: ok. 5 passed; 0 failed
+```
+
+---
+
+## Deploy to Testnet
+
+```bash
+# 1. Generate and fund a deployer key
+stellar keys generate deployer --network testnet
+stellar keys fund deployer --network testnet
+
+# 2. Upload the Wasm binary to the ledger
+stellar contract upload \
+  --source deployer \
+  --network testnet \
+  --wasm target/wasm32-unknown-unknown/release/ride_pay.wasm
+# → prints a 64-char hex WASM_HASH
+
+# 3. Deploy a contract instance from that hash
+stellar contract deploy \
+  --source deployer \
+  --network testnet \
+  --wasm-hash <WASM_HASH>
+# → prints CONTRACT_ID (starts with C...)
+
+# 4. Initialise
+stellar contract invoke \
+  --id <CONTRACT_ID> \
+  --source deployer \
+  --network testnet \
+  -- initialize \
+  --admin         <ADMIN_ADDRESS> \
+  --usdc_token    <USDC_CONTRACT_ADDRESS> \
+  --loyalty_token <LOYALTY_CONTRACT_ADDRESS>
+```
+
+> Get the USDC contract address for testnet:
+> ```bash
+> stellar contract id asset \
+>   --asset USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 \
+>   --network testnet
+> ```
+
+---
+
+## Rider: approve spending before first ride
+
+The mobile app handles this via wallet deep-link. Manually via CLI:
+
+```bash
+stellar contract invoke \
+  --id <USDC_CONTRACT_ADDRESS> \
+  --source rider_key \
+  --network testnet \
+  -- approve \
+  --from              <RIDER_ADDRESS> \
+  --spender           <CONTRACT_ID> \
+  --amount            10000000 \
+  --expiration_ledger 9999999
+```
+
+---
+
+## Sample CLI Invocation — Settle a Ride
+
+```bash
+stellar contract invoke \
+  --id <CONTRACT_ID> \
+  --source rider_key \
+  --network testnet \
+  -- settle_ride \
+  --ride_id     "ride-20240101-001" \
+  --rider       <RIDER_ADDRESS> \
+  --operator    <OPERATOR_ADDRESS> \
+  --usdc_amount 100000
+```
+
+Expected response:
+
+```json
+{
+  "operator":    "G...",
+  "rider":       "G...",
+  "usdc_amount": 100000,
+  "settled_at":  1717977600
+}
+```
+
+> `usdc_amount` is in USDC stroops (7 decimal places). `100000 = 0.01 USDC`.
+> Adjust to match the local fare converted to USD at today's rate.
+
+---
+
+## Adapting to your region
+
+| Parameter | How to adapt |
+|-----------|-------------|
+| `usdc_amount` | Convert local fare → USD → multiply by 10,000,000 for stroops |
+| `loyalty_token` | Issue any custom Stellar asset; admin mints reserve to contract at deploy |
+| USDC anchor | Integrate any regional anchor for fiat off-ramp via Stellar DEX |
+| QR format | Encode `stellar:<OPERATOR>?amount=<FARE>&asset=USDC` per SEP-7 |
+
+---
+
+## Project structure
+
+```
+ridepay/
+├── Cargo.toml
+├── README.md
+└── src/
+    ├── lib.rs    ← Soroban contract
+    └── test.rs   ← 5 unit tests
+```
+
+---
+
+## License
+
+MIT © 2024 RidePay contributors
 
 ## Contract Details
 
 - Contract Address: CBLU4IUASQ4WUMOXBFLZRSBBLILGOH33GS4LUPKFBCCCMJCDQNMF7G2M
   <img width="1920" height="950" alt="image" src="https://github.com/user-attachments/assets/b8e1eb87-bdb3-4ce3-8872-a71b5c117ba4" />
-
-
-## Future Scope
-
-### Short-Term Enhancements
-
-1. **Note Encryption**: Support for end-to-end encryption of note content for enhanced privacy
-2. **Category Management**: Add tags and categories to organize notes efficiently
-3. **Rich Text Support**: Extend support beyond plain text to include Markdown and formatted content
-4. **Search Functionality**: Implement advanced search filters for large note collections
-
-### Medium-Term Development
-
-5. **Collaborative Notes**: Implement multi-signature requirements for shared or collaborative note-taking
-   - Shared access for multiple addresses
-   - Permission-based editing and viewing
-   - Version history tracking
-6. **Notification System**: Off-chain bridge to alert users of new updates or shared notes
-7. **Asset Attachment**: Capability to attach digital assets or tokens to specific notes
-8. **Inter-Contract Integration**: Allow other smart contracts to interact with and store data in the notes contract
-
-### Long-Term Vision
-
-9. **Cross-Chain Synchronization**: Extend note storage to multiple blockchain networks
-10. **Decentralized UI Hosting**: Host the frontend on IPFS or similar decentralized platforms
-11. **AI-Powered Summarization**: Optional integration with AI to help users summarize their notes
-12. **Privacy Layers**: Implement zero-knowledge proofs for completely private note content
-13. **DAO Governance**: Community-driven protocol improvements and feature prioritization
-14. **Identity Management**: Integration with decentralized identity (DID) systems for user management
-
-### Enterprise Features
-
-15. **Corporate Documentation**: Adapt the system for secure corporate record-keeping
-16. **Immutable Logging**: Create time-locked logs for audit purposes
-17. **Automated Reporting**: Automatic note triggers for periodic reporting
-18. **Multi-Language Support**: Expand accessibility with internationalization
-
----
-
-## Technical Requirements
-
-- Soroban SDK
-- Rust programming language
-- Stellar blockchain network
-
-## Getting Started
-
-Deploy the smart contract to Stellar's Soroban network and interact with it using the three main functions:
-
-- `create_note()` - Create a new note with a title and content
-- `get_notes()` - Retrieve all stored notes from the contract
-- `delete_note()` - Remove a specific note by its ID
-
----
-
-**Stellar Notes DApp** - Securing Your Thoughts on the Blockchain
