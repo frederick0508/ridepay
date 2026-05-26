@@ -1,0 +1,15 @@
+[package]
+name = "ride_pay"
+version = "0.1.0"
+edition = "2021"
+description = "RidePay — USDC micropayment settlement for informal transport operators on Stellar"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

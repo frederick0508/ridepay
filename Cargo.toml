@@ -1,0 +1,19 @@
+[workspace]
+members = ["contracts/ride_pay"]
+resolver = "2"
+
+[workspace.dependencies]
+soroban-sdk = { version = "21.0.0" }
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = false
+strip = "symbols"
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.release-with-logs]
+inherits = "release"
+debug-assertions = true
